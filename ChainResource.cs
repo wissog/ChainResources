@@ -51,13 +51,23 @@ namespace ChainResources
                         {
                             if (storageNode != _storageChain.First && _writingToExpiredNeeded)
                             {
-                                await WriteToPreviousExpiredStorages(storageNode, value);
+                                var results = await WriteToPreviousExpiredStorages(storageNode, value);
                                 _writingToExpiredNeeded = false;
                             }
                         }
-                        catch (Exception ex)
+                        catch (AggregateException agEx)
                         {
-                            // TODO handle error in writing
+                            agEx.Flatten().Handle(ex =>
+                            {
+                                if (ex is IOException ioEx)
+                                {
+                                    throw new Exception("Error writing to file: " + ioEx.Message);
+                                }
+                                else
+                                {
+                                    throw ex;
+                                }
+                            });
                         }
                         finally
                         {
@@ -74,7 +84,7 @@ namespace ChainResources
 
         public bool IsEmpty => _storageChain.Count == 0;
 
-        private async Task WriteToPreviousExpiredStorages(LinkedListNode<IStorage<T>>? storageNode, T value)
+        private async Task<bool[]> WriteToPreviousExpiredStorages(LinkedListNode<IStorage<T>>? storageNode, T value)
         {
             WriteCounter++;
 
@@ -86,14 +96,13 @@ namespace ChainResources
 
                 if (storageNode?.Value is IWriteableStorage<T> wrStorage && storageNode.Value.IsExpired())
                 {
-                    // don't await the writing to finish
-                    var task = wrStorage.Write(value);
-                    writeTaskList.Add(task);
+                    writeTaskList.Add(wrStorage.Write(value));
                 }
             }
-            while (storageNode != _storageChain.First);
+            while (storageNode != null);
 
-            await Task.WhenAll(writeTaskList);
+            var results = await Task.WhenAll(writeTaskList);
+            return results;
         }
     }
 }
